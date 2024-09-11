@@ -1,7 +1,7 @@
 import { Config } from "./config.js";
 import { Message } from "wechaty";
 import { ContactInterface, RoomInterface } from "wechaty/impls";
-import { Configuration, OpenAIApi } from "openai";
+import { OpenAI } from "openai";
 
 enum MessageType {
   Unknown = 0,
@@ -44,21 +44,20 @@ export class ChatGPTBot {
   // please refer to the OpenAI API doc: https://beta.openai.com/docs/api-reference/introduction
   chatgptModelConfig: object = {
     // this model field is required
-    model: "gpt-4o",
+    model: Config.modelName,
     // add your ChatGPT model parameters below
-    temperature: 0.8,
+    temperature: 1.0,
     // max_tokens: 2000,
   };
 
   // ChatGPT system content configuration (guided by OpenAI official document)
   currentDate: string = new Date().toISOString().split("T")[0];
-  chatgptSystemContent: string = `You are ChatGPT, a large language model trained by OpenAI. Answer in user's language as concisely as possible.\nKnowledge cutoff: October 2023\nCurrent date: ${this.currentDate}`;
+  chatgptSystemContent: string = `请保持回答精准简洁\n Current date: ${this.currentDate}`;
 
   // message size for a single reply by the bot
   SINGLE_MESSAGE_MAX_SIZE: number = 500;
 
   // OpenAI API
-  private openaiAccountConfig: any; // OpenAI API key (required) and organization key (optional)
   private openaiApiInstance: any; // OpenAI API instance
 
   // set bot name during login stage
@@ -76,13 +75,13 @@ export class ChatGPTBot {
   // configure API with model API keys and run an initial test
   async startGPTBot() {
     try {
-      // OpenAI account configuration
-      this.openaiAccountConfig = new Configuration({
-        organization: Config.openaiOrganizationID,
+      // OpenAI API instance
+      console.log(`baseURL: ${Config.baseURL}`);
+      this.openaiApiInstance = new OpenAI({
+        baseURL: Config.baseURL,
         apiKey: Config.openaiApiKey,
       });
-      // OpenAI API instance
-      this.openaiApiInstance = new OpenAIApi(this.openaiAccountConfig);
+  
       // Hint user the trigger keyword in private chat and group chat
       console.log(`🤖️ ChatGPT name is: ${this.botName}`);
       console.log(
@@ -91,6 +90,7 @@ export class ChatGPTBot {
       console.log(
         `🎯 Trigger keyword in group chat is: ${this.chatGroupTriggerKeyword}`
       );
+  
       // Run an initial test to confirm API works fine
       await this.onChatGPT("Say Hello World");
       console.log(`✅ ChatGPT starts success, ready to handle message!`);
@@ -185,30 +185,23 @@ export class ChatGPTBot {
   private async onChatGPT(text: string): Promise<string> {
     const inputMessages = this.createMessages(text);
     try {
-      // config OpenAI API request body
-      const response = await this.openaiApiInstance.createChatCompletion({
-        ...this.chatgptModelConfig,
-        messages: inputMessages,
-      });
-      // use OpenAI API to get ChatGPT reply message
-      const chatgptReplyMessage =
-        response?.data?.choices[0]?.message?.content?.trim();
-      console.log(`🤖️ ChatGPT says: ${chatgptReplyMessage}`);
-      return chatgptReplyMessage;
-    } catch (e: any) {
-      console.error(`❌ ${e}`);
-      const errorResponse = e?.response;
-      const errorCode = errorResponse?.status;
-      const errorStatus = errorResponse?.statusText;
-      const errorMessage = errorResponse?.data?.error?.message;
-      if (errorCode && errorStatus) {
-        const errorLog = `Code ${errorCode}: ${errorStatus}`;
-        console.error(`❌ ${errorLog}`);
-      }
-      if (errorMessage) {
-        console.error(`❌ ${errorMessage}`);
-      }
-      return this.chatgptErrorMessage;
+        const completion = await this.openaiApiInstance.chat.completions.create({
+            ...this.chatgptModelConfig,
+            messages: inputMessages,
+        });
+
+        const chatgptReplyMessage = completion.choices[0]?.message?.content?.trim() || '';
+        console.log(`🤖️ ChatGPT says: ${chatgptReplyMessage}`);
+        return chatgptReplyMessage;
+    } catch (e) {
+        if (e instanceof OpenAI.APIError) {
+            console.error(`OpenAI API error: ${e.message}`);
+            console.error(`Error code: ${e.code}`);
+            console.error(`Error type: ${e.type}`);
+        } else {
+            console.error(`Unexpected error: ${e}`);
+        }
+        return this.chatgptErrorMessage;
     }
   }
 
@@ -243,6 +236,7 @@ export class ChatGPTBot {
     const chatgptReplyMessage = await this.onChatGPT(text);
     // the whole reply consist of: original text and bot reply
     const wholeReplyMessage = `${text}\n----------\n${chatgptReplyMessage}`;
+    
     await this.reply(room, wholeReplyMessage);
   }
 
@@ -268,7 +262,9 @@ export class ChatGPTBot {
     if (isPrivateChat) {
       return await this.onPrivateMessage(talker, text);
     } else {
-      return await this.onGroupMessage(room, text);
+      console.log("无视群消息");
+      return;
+      //return await this.onGroupMessage(room, text);
     }
   }
 
